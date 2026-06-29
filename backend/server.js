@@ -12,23 +12,31 @@ const dbPath = path.resolve(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {
+  // UPGRADED: Added priority column
   db.run(`CREATE TABLE IF NOT EXISTS todos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     title TEXT NOT NULL,
     description TEXT,
+    tags TEXT DEFAULT '',
+    due_date DATETIME,
+    priority TEXT DEFAULT 'Low',
     status TEXT DEFAULT 'pending',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
 });
 
-// Create Todo (POST)
+// Create Todo (POST) - Upgraded with Priority
 app.post('/api/todos', (req, res) => {
-  const { title, description } = req.body;
+  const { title, description, tags, due_date, priority } = req.body;
   if (!title) return res.status(400).json({ error: "Title is required" });
   
-  db.run(`INSERT INTO todos (title, description) VALUES (?, ?)`, [title, description], function(err) {
+  const sql = `INSERT INTO todos (title, description, tags, due_date, priority) VALUES (?, ?, ?, ?, ?)`;
+  db.run(sql, [title, description || null, tags || '', due_date || null, priority || 'Low'], function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ id: this.lastID, title, description, status: 'pending' });
+    
+    db.get(`SELECT * FROM todos WHERE id = ?`, [this.lastID], (err, row) => {
+      res.json(row);
+    });
   });
 });
 
@@ -51,8 +59,19 @@ app.get('/api/todos/:id', (req, res) => {
 
 // Update Todo (PUT)
 app.put('/api/todos/:id', (req, res) => {
-  const { status } = req.body;
-  db.run(`UPDATE todos SET status = ? WHERE id = ?`, [status, req.params.id], function(err) {
+  const updates = [];
+  const values = [];
+  
+  if (req.body.status !== undefined) { updates.push('status = ?'); values.push(req.body.status); }
+  if (req.body.title !== undefined) { updates.push('title = ?'); values.push(req.body.title); }
+  if (req.body.priority !== undefined) { updates.push('priority = ?'); values.push(req.body.priority); }
+
+  if (updates.length === 0) return res.status(400).json({ error: "No fields to update" });
+
+  const sql = `UPDATE todos SET ${updates.join(', ')} WHERE id = ?`;
+  values.push(req.params.id);
+  
+  db.run(sql, values, function(err) {
     if (err) return res.status(500).json({ error: err.message });
     res.json({ message: "Updated successfully" });
   });
